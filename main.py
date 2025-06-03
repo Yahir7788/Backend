@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 DATABASE_URL = "sqlite:///./motociclistas.db"
 
@@ -18,7 +18,15 @@ class Motociclista(Base):
     fecha_nacimiento = Column(String, nullable=False)
     numero_control = Column(String, nullable=False)
 
-Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine) # Restoring this line
+
+# Dependency to get DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 class MotociclistaSchema(BaseModel):
     id: int
@@ -44,45 +52,42 @@ app.add_middleware(
 )
 
 @app.get("/motociclistas", response_model=List[MotociclistaSchema])
-def read_motociclistas():
-    db = SessionLocal()
+def read_motociclistas(db: Session = Depends(get_db)):
     items = db.query(Motociclista).all()
-    db.close()
     return items
 
 @app.post("/motociclistas", response_model=MotociclistaSchema)
-def create_motociclista(m: MotociclistaCreate):
-    db = SessionLocal()
+def create_motociclista(m: MotociclistaCreate, db: Session = Depends(get_db)):
     db_item = Motociclista(**m.dict())
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
-    db.close()
     return db_item
 
-@app.put("/motociclistas/{motociclista_id}", response_model=MotociclistaSchema)
-def update_motociclista(motociclista_id: int, m: MotociclistaCreate):
-    db = SessionLocal()
+@app.get("/motociclistas/{motociclista_id}", response_model=MotociclistaSchema)
+def read_motociclista_by_id(motociclista_id: int, db: Session = Depends(get_db)):
     motociclista = db.query(Motociclista).filter(Motociclista.id == motociclista_id).first()
     if motociclista is None:
-        db.close()
+        raise HTTPException(status_code=404, detail="Not found")
+    return motociclista
+
+@app.put("/motociclistas/{motociclista_id}", response_model=MotociclistaSchema)
+def update_motociclista(motociclista_id: int, m: MotociclistaCreate, db: Session = Depends(get_db)):
+    motociclista = db.query(Motociclista).filter(Motociclista.id == motociclista_id).first()
+    if motociclista is None:
         raise HTTPException(status_code=404, detail="Not found")
     motociclista.qr = m.qr
     motociclista.fecha_nacimiento = m.fecha_nacimiento
     motociclista.numero_control = m.numero_control
     db.commit()
     db.refresh(motociclista)
-    db.close()
     return motociclista
 
 @app.delete("/motociclistas/{motociclista_id}")
-def delete_motociclista(motociclista_id: int):
-    db = SessionLocal()
+def delete_motociclista(motociclista_id: int, db: Session = Depends(get_db)):
     motociclista = db.query(Motociclista).filter(Motociclista.id == motociclista_id).first()
     if motociclista is None:
-        db.close()
         raise HTTPException(status_code=404, detail="Not found")
     db.delete(motociclista)
     db.commit()
-    db.close()
     return {"ok": True}
